@@ -1,0 +1,281 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PRODUCTION_COORDINATOR
+  PROCUREMENT_SPECIALIST
+  QC_SPECIALIST
+  ASSEMBLER
+  ADMIN
+  SERVICE_DEPARTMENT
+}
+
+enum OrderStatus {
+  CREATED
+  PROCUREMENT_REVIEW
+  PROCUREMENT_APPROVED
+  PRE_QC
+  ASSEMBLY
+  FINAL_QC
+  SHIPPED
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  BLOCKED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  role      UserRole
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdOrders Order[] @relation("OrderCreator")
+  assignedTasks Task[]  @relation("TaskAssignee")
+  qcRecords     QCRecord[]
+
+  @@map("users")
+}
+
+model Order {
+  id                String      @id @default(cuid())
+  poNumber          String      @unique
+  customerName      String
+  customerEmail     String?
+  customerPhone     String?
+  projectName       String?
+  deliveryDate      DateTime
+  salesRep          String
+  status            OrderStatus @default(CREATED)
+  totalQuantity     Int
+  language          String      @default("EN") // EN, FR
+  notes             String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  createdById String
+  createdBy   User   @relation("OrderCreator", fields: [createdById], references: [id])
+
+  configurations OrderConfiguration[]
+  documents      Document[]
+  bomEntries     BOMEntry[]
+  tasks          Task[]
+  qcRecords      QCRecord[]
+
+  @@map("orders")
+}
+
+model OrderConfiguration {
+  id              String  @id @default(cuid())
+  orderId         String
+  buildNumber     String  @unique
+  sinkFamily      String  // MDRD, Endoscope, InstroSink
+  quantity        Int
+  
+  // Sink Body Configuration
+  sinkModel       String? // T2-B1, T2-B2, T2-B3
+  sinkWidth       Int?    // in inches
+  sinkLength      Int?    // in inches
+  legType         String? // DL27, DL14, LC1
+  legHeightType   String? // Height Adjustable, Fixed Height
+  feetType        String? // Lock & Leveling Casters, S.S Adjustable Seismic Feet
+  workflowDirection String? // Left to Right, Right to Left
+  
+  // Pegboard Configuration
+  hasPegboard     Boolean @default(false)
+  pegboardType    String? // Colorsafe+, Perforated, Solid
+  pegboardColor   String? // Green, Black, Yellow, Grey, Red, Blue, Orange, White
+  pegboardSize    String? // Same as Sink Length or Custom Size
+  pegboardWidth   Int?    // Custom width in inches
+  pegboardLength  Int?    // Custom length in inches
+  
+  // Basin Configuration - stored as JSON array for multiple basins
+  basins          Json?   // Array of basin configurations
+  
+  // Faucet Configuration
+  faucets         Json?   // Array of faucet configurations
+  
+  // Accessories
+  accessories     Json?   // Array of selected accessories
+  
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  @@map("order_configurations")
+}
+
+model Document {
+  id       String @id @default(cuid())
+  orderId  String
+  filename String
+  filepath String
+  fileType String
+  fileSize Int
+  uploadedAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("documents")
+}
+
+model Category {
+  id            String @id @default(cuid())
+  categoryCode  String @unique
+  name          String
+  description   String?
+  
+  subcategories Subcategory[]
+  assemblies    Assembly[]
+  
+  @@map("categories")
+}
+
+model Subcategory {
+  id              String @id @default(cuid())
+  subcategoryCode String @unique
+  name            String
+  description     String?
+  categoryId      String
+  
+  category   Category   @relation(fields: [categoryId], references: [id])
+  assemblies Assembly[]
+  
+  @@map("subcategories")
+}
+
+model Assembly {
+  id              String  @id @default(cuid())
+  assemblyCode    String  @unique
+  name            String
+  type            String? // SERVICE_PART, STANDARD, etc.
+  categoryId      String
+  subcategoryId   String?
+  canOrder        Boolean @default(true)
+  isKit           Boolean @default(false)
+  status          String  @default("ACTIVE")
+  imageUrl        String?
+  drawingUrl      String?
+  qrCode          String?
+  
+  category      Category      @relation(fields: [categoryId], references: [id])
+  subcategory   Subcategory?  @relation(fields: [subcategoryId], references: [id])
+  components    AssemblyComponent[]
+  bomEntries    BOMEntry[]
+  
+  @@map("assemblies")
+}
+
+model Part {
+  id                     String  @id @default(cuid())
+  partNumber             String  @unique
+  name                   String
+  manufacturerPartNumber String?
+  manufacturerInfo       String?
+  type                   String  @default("COMPONENT")
+  status                 String  @default("ACTIVE")
+  
+  assemblyComponents AssemblyComponent[]
+  
+  @@map("parts")
+}
+
+model AssemblyComponent {
+  id         String @id @default(cuid())
+  assemblyId String
+  partId     String
+  quantity   Int    @default(1)
+  
+  assembly Assembly @relation(fields: [assemblyId], references: [id])
+  part     Part     @relation(fields: [partId], references: [id])
+  
+  @@unique([assemblyId, partId])
+  @@map("assembly_components")
+}
+
+model BOMEntry {
+  id         String  @id @default(cuid())
+  orderId    String
+  assemblyId String?
+  quantity   Int
+  approved   Boolean @default(false)
+  procured   Boolean @default(false)
+  notes      String?
+  
+  order    Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  assembly Assembly? @relation(fields: [assemblyId], references: [id])
+  
+  @@map("bom_entries")
+}
+
+model WorkInstruction {
+  id          String @id @default(cuid())
+  title       String
+  description String
+  steps       Json
+  toolsNeeded Json?
+  safetyNotes String?
+  
+  tasks Task[]
+  
+  @@map("work_instructions")
+}
+
+model Task {
+  id               String     @id @default(cuid())
+  orderId          String
+  title            String
+  description      String?
+  status           TaskStatus @default(PENDING)
+  priority         Int        @default(0)
+  estimatedHours   Float?
+  actualHours      Float?
+  assignedToId     String?
+  workInstructionId String?
+  dueDate          DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  
+  order           Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  assignedTo      User?            @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  workInstruction WorkInstruction? @relation(fields: [workInstructionId], references: [id])
+  
+  @@map("tasks")
+}
+
+model Tool {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+  category    String?
+  available   Boolean @default(true)
+  
+  @@map("tools")
+}
+
+model QCRecord {
+  id          String   @id @default(cuid())
+  orderId     String
+  type        String   // "PRE_QC" or "FINAL_QC"
+  inspectorId String
+  passed      Boolean
+  checklist   Json
+  notes       String?
+  inspectedAt DateTime @default(now())
+  
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  inspector User  @relation(fields: [inspectorId], references: [id])
+  
+  @@map("qc_records")
+}
